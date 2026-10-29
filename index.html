@@ -17,8 +17,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anek+Latin:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-html,body{margin:0;height:100%;background:#F2F4F7;overflow:hidden}
-#app{position:absolute;left:50%;top:50%;width:393px;transform-origin:center center}
+html,body{margin:0;background:#F2F4F7}
+body.desktop{height:100vh;overflow:hidden}
+body.phone{overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#app{position:absolute;width:393px}
+body.desktop #app{left:50%;top:50%;transform-origin:center center}
+body.phone #app{left:0;top:0;transform-origin:0 0}
 .screen{position:absolute;inset:0}
 .screen[hidden]{display:none}
 @keyframes cc-fill{from{width:0%}to{width:100%}}
@@ -638,15 +642,27 @@ button{font-family:inherit;cursor:pointer}
   var STEP_MS=3000, SPLASH_MS=3000;
   var current=null, timer=null;
 
+  var MIN_H=760;
   function fit(){
-    var w=innerWidth,h=innerHeight,phone=w<=520,s,ht;
+    var w=document.documentElement.clientWidth||innerWidth;
+    var vh=(window.visualViewport?visualViewport.height:innerHeight);
+    var phone=w<=520,s,ht;
     document.body.classList.toggle('phone',phone);
     document.body.classList.toggle('desktop',!phone);
-    if(phone){s=w/393;ht=h/s;}else{s=Math.min(1,(h-48)/852);ht=852;}
+    if(phone){
+      s=w/393; ht=Math.max(vh/s,MIN_H);
+      app.style.transform='scale('+s+')';
+      document.body.style.height=Math.ceil(ht*s)+'px';
+    }else{
+      s=Math.min(1,(vh-48)/852); ht=852;
+      app.style.transform='translate(-50%,-50%) scale('+s+')';
+      document.body.style.height='';
+    }
     app.style.height=ht+'px';
     app.style.setProperty('--h',ht+'px');
-    app.style.transform='translate(-50%,-50%) scale('+s+')';
   }
+  if(window.visualViewport) visualViewport.addEventListener('resize',fit);
+  addEventListener('orientationchange',function(){setTimeout(fit,300);});
   addEventListener('resize',fit);fit();
 
   function show(name,push){
@@ -654,7 +670,7 @@ button{font-family:inherit;cursor:pointer}
     if(!el) return;
     clearTimeout(timer);
     if(current) current.hidden=true;
-    el.hidden=false; current=el;
+    el.hidden=false; current=el; window.scrollTo(0,0);
     el.querySelectorAll('[data-bar]').forEach(function(b){b.classList.remove('run');void b.offsetWidth;b.classList.add('run');});
     el.classList.remove('paused');
     if(push!==false && location.hash!=='#'+name) history.pushState(null,'','#'+name);
