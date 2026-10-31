@@ -1,4 +1,11 @@
 
+var CC_VENUES = {"hpv": [{"name": "AIIMS Delhi - Nursing Home", "addr": "Ansari Nagar East, New Delhi, 110029"}, {"name": "Safdarjung Hospital OPD", "addr": "Ansari Nagar West, New Delhi, 110029"}, {"name": "Max Healthcare Vaccination Clinic", "addr": "Press Enclave Road, Saket, New Delhi, 110017"}, {"name": "Central Govt. Health Centre", "addr": "Sarojini Nagar, New Delhi, 110023"}, {"name": "Fortis Clinic, Vasant Kunj", "addr": "Sector B, Vasant Kunj, New Delhi, 110070"}, {"name": "Ayush Wellness Centre, SDMC", "addr": "Green Park Extension, New Delhi, 110016"}], "scr": [{"name": "AIIMS Gynaecology OPD", "addr": "Ansari Nagar East, New Delhi, 110029"}, {"name": "Dr. Lal PathLabs, Green Park", "addr": "Green Park Main, New Delhi, 110016"}, {"name": "Safdarjung Cancer Screening Clinic", "addr": "Ansari Nagar West, New Delhi, 110029"}, {"name": "Max Women’s Health Centre", "addr": "Press Enclave Road, Saket, New Delhi, 110017"}, {"name": "CGHS Wellness Centre", "addr": "Sarojini Nagar, New Delhi, 110023"}, {"name": "Fortis Women’s Clinic, Vasant Kunj", "addr": "Sector B, Vasant Kunj, New Delhi, 110070"}], "gyn": [{"name": "Dr. Meera Kapoor", "addr": "Kapoor Women’s Clinic, Green Park, New Delhi, 110016"}, {"name": "Dr. Anjali Verma", "addr": "AIIMS Gynaecology OPD, Ansari Nagar, New Delhi, 110029"}, {"name": "Dr. Rahul Mehta", "addr": "Max Hospital, Saket, New Delhi, 110017"}, {"name": "Dr. Sunita Rao", "addr": "Safdarjung Hospital, Ansari Nagar West, New Delhi, 110029"}, {"name": "Dr. Priya Nair", "addr": "Fortis Hospital, Vasant Kunj, New Delhi, 110070"}]};
+function ccRoot() { var w = window; try { while (w.parent && w.parent !== w) { void w.parent.document.body; w = w.parent; } } catch (e) {} return w; }
+function ccMail(k, v) { var r = ccRoot(); (r.__ccMail = r.__ccMail || {})[k] = v; try { localStorage.setItem('cc_' + k, JSON.stringify(v)); } catch (e) {}
+  var walk = function (w, d) { try { w.postMessage({ ccMail: k, v: v }, '*'); } catch (e) {} if (d > 4) return; try { for (var i = 0; i < w.frames.length; i++) walk(w.frames[i], d + 1); } catch (e) {} };
+  var top = window; try { top = window.top; } catch (e) {} walk(top, 0); }
+function ccTake(k) { var v = null, r = ccRoot(); if (r.__ccMail && r.__ccMail[k] != null) { v = r.__ccMail[k]; delete r.__ccMail[k]; } try { var t = localStorage.getItem('cc_' + k); if (t != null) { if (v == null) v = JSON.parse(t); localStorage.removeItem('cc_' + k); } } catch (e) {} return v; }
+function ccListen(fn) { try { window.addEventListener('message', function (e) { var d = e.data; if (d && d.ccMail) fn(d.ccMail, d.v); }); } catch (e) {} }
 class Component extends DCLogic {
   constructor(props) {
     super(props);
@@ -10,8 +17,12 @@ class Component extends DCLogic {
       ],
       sel: 0, menu: null, modal: null,
       relation: '', dob: '', gender: '', first: '', last: '', consent: false, child: false,
-      pickMode: null, editIdx: -1, eFirst: '', eLast: '', eDob: '', eGender: '', eRel: 'Child', delIdx: -1, toast: '', tip: true
+      pickMode: null, editIdx: -1, eFirst: '', eLast: '', eDob: '', eGender: '', eRel: 'Child', delIdx: -1, toast: '', tip: true,
+      rems: [], remView: 'list', remF: null, remSel: 0, remPop: null, remSug: false, remDel: false, remBackTo: 'list'
     };
+    this.state.rems = this.ccSeed();
+    var dr = ccTake('remDraft'); if (dr) Object.assign(this.state, this.ccDraftState(dr, 'list'));
+    ccListen((k, v) => { if (k === 'remDraft' && v) { ccTake('remDraft'); this.ccOpenForm(v, 'list'); } });
   }
   componentWillUnmount() {
     clearTimeout(this.toastTimer);
@@ -28,7 +39,7 @@ class Component extends DCLogic {
   }
   showToast(msg) {
     clearTimeout(this.toastTimer);
-    this.setState({ toast: msg });
+    this.setState({ toast: msg, toastUndo: false });
     this.toastTimer = setTimeout(() => this.setState({ toast: '' }), 2500);
   }
   needsConsent(rel, dob) {
@@ -100,6 +111,7 @@ class Component extends DCLogic {
   }
   rtSetMember(patch, extra) {
     var s = this.state; patch = this.rtSort(patch);
+    var pm = s.members[s.sel]; if (pm) ['hpv', 'scr'].forEach((k) => { if (patch[k + 'D']) this.ccPrune(pm.name, k, patch[k + 'D']); });
     var members = s.members.map((m, i) => i === s.sel ? Object.assign({}, m, patch) : m);
     this.setState(Object.assign({ members: members }, extra || {}));
   }
@@ -115,7 +127,7 @@ class Component extends DCLogic {
   }
   rtRows(s, cur) {
     var type = s.recType === 'scr' ? 'scr' : 'hpv';
-    var dates = this.rtDates(cur, type), rem = type === 'scr' ? cur.scrRem : cur.hpvRem;
+    var dates = this.rtDates(cur, type), rem = this.ccRemFor(cur, type);
     var name = type === 'scr' ? 'Screening ' : 'Dose ';
     var files = this.rtFiles(cur, type);
     var today = this.hfToday(), rows = [];
@@ -161,10 +173,10 @@ class Component extends DCLogic {
         del: () => { if (r.kind === 'next') return; this.setState({ rtMenu: null, rtDel: true, rtIdx: r.i }); },
         add: () => { this.setState({ rtMenu: null }); this.hfStart(cur, true, type); },
         remind: () => {
-          var pre = rem || '';
-          this.setState({ rtMenu: null, rtSheet: 'rem', rtIdx: r.i, rtTxt: this.hfDmy(pre), rtDate: pre, rtBad: false, rtTouched: false });
+          var ex = this.ccUpcoming().filter((x) => x.type === type && x.who === cur.name)[0];
+          this.ccOpenForm(ex ? { id: ex.id } : { type: type, who: cur.name }, 'record');
         },
-        unremind: () => { this.rtSetMember(type === 'scr' ? { scrRem: '' } : { hpvRem: '' }, { rtMenu: null }); this.showToast('Reminder removed'); }
+        unremind: () => { this.setState({ rtMenu: null, rems: (this.state.rems || []).filter((x) => !(x.type === type && x.who === cur.name)) }); this.showToast('Reminder removed'); }
       };
     });
   }
@@ -191,7 +203,7 @@ class Component extends DCLogic {
     if (type === 'scr' && !self && age >= 0 && age < 21) return Object.assign({ text: this.rtTip(type, cur), acts: false }, pink);
     var next = this.rtRows(s, cur).filter((r) => r.isNext)[0];
     if (!next) return Object.assign({ text: this.rtTip(type, cur), acts: false }, pink);
-    var what = next.label, rem = type === 'scr' ? cur.scrRem : cur.hpvRem;
+    var what = next.label, rem = this.ccRemFor(cur, type);
     var item = type === 'scr' ? 'screening' : 'dose', who2 = self ? 'your' : who + '’s';
     var book = ' Just book a visit with a centre or gynecologist, and add it here once it’s done.';
     var own = self ? '' : who + '’s ';
@@ -265,8 +277,8 @@ class Component extends DCLogic {
       rtFindLabel: type === 'scr' ? 'Find nearby screening centre' : 'Find nearby vaccination centre',
       rtFindCentre: () => this.showToast((type === 'scr' ? 'Screening' : 'Vaccination') + ' centre finder is coming soon'),
       rtFindGyn: () => this.showToast('Gynecologist finder is coming soon'),
-      rtRemLabel: (type === 'scr' ? cur.scrRem : cur.hpvRem) ? 'Change reminder' : 'Set reminder',
-      rtLateRemind: () => { var d = dates.length, rm = (type === 'scr' ? cur.scrRem : cur.hpvRem) || ''; this.setState({ rtMenu: null, rtSheet: 'rem', rtIdx: d, rtTxt: this.hfDmy(rm), rtDate: rm, rtBad: false, rtTouched: false }); },
+      rtRemLabel: (this.ccRemFor(cur, type)) ? 'Change reminder' : 'Set reminder',
+      rtLateRemind: () => { var ex = this.ccUpcoming().filter((x) => x.type === type && x.who === cur.name)[0]; this.ccOpenForm(ex ? { id: ex.id } : { type: type, who: cur.name }, 'record'); },
       rtSheetOpen: !!s.rtSheet,
       rtShowRx: !!s.rtSheet && !isRem, rtHasFile: !!s.rtFile && (s.rtFile.pct == null || s.rtFile.pct >= 100), rtUploading: !!s.rtFile && s.rtFile.pct != null && s.rtFile.pct < 100, rtPct: s.rtFile ? Math.round(s.rtFile.pct == null ? 100 : s.rtFile.pct) + '%' : '0%', rtNoFile: !s.rtFile,
       rtFileName: s.rtFile ? s.rtFile.file : '', rtFileSize: s.rtFile ? s.rtFile.size : '',
@@ -467,6 +479,7 @@ class Component extends DCLogic {
         var patch = {}; patch[T] = all.length; patch[T + 'D'] = all; patch[T + 'F'] = allF; patch[T + 'U'] = allU; patch[T + 'Rem'] = ''; patch[T + 'None'] = false;
         if (isScr) { var pr = (cur.scrR || []).slice(); while (pr.length < prior.length) pr.push(''); patch.scrR = pr.concat(hf.doses.map((d) => d.res || '')); }
         var members = s.members.map((m, i) => i === s.sel ? Object.assign({}, m, this.rtSort(patch)) : m);
+        this.ccPrune(cur.name, T, all);
         this.setState(Object.assign({ members: members, hfConfirm: false }, s.hfFromList ? { view: 'record', recType: T, recMode: 'list' } : { view: 'tracker' }));
         var nm = isScr ? 'Screening ' : 'Dose ', pl = isScr ? ' screenings added' : ' doses added';
         this.showToast(hf.doses.length > 1 ? hf.doses.length + pl : nm + (hf.base + 1) + ' added');
@@ -524,6 +537,241 @@ class Component extends DCLogic {
   startAdd() {
     this.setState({ view: 'form', menu: null, modal: null, relation: '', dob: '', gender: '', first: '', last: '', consent: false, child: false });
   }
+
+  // ---------- Appointment reminders ----------
+  ccMeta(t) { return { hpv: { label: 'Vaccination', word: 'HPV vaccination', list: 'vaccination centre', ph: 'Search or type a vaccination centre', q: 'get the HPV vaccine', yes: 'Yes, add record' }, scr: { label: 'Screening', word: 'screening', list: 'screening centre', ph: 'Search or type a screening centre', q: 'get screened', yes: 'Yes, add record' }, gyn: { short: 'Gynecologist', label: 'Gynecologist visit', word: 'gynecologist visit', list: 'gynecologist', ph: 'Search or type a doctor or clinic', q: 'see the gynecologist', yes: 'Yes, mark as done' } }[t] || {}; }
+  ccFirst(m) { return m ? (m.first || m.name.split(/\s+/)[0]) : ''; }
+  ccMember(name) { var ms = this.state.members; return ms.filter((m) => m.name === name)[0] || null; }
+  ccAddDays(iso, n) { var p = iso.split('-'), d = new Date(+p[0], +p[1] - 1, +p[2] + n), z = (k) => (k < 10 ? '0' : '') + k; return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()); }
+  ccSeed() {
+    var t = this.hfToday();
+    return [
+      { id: 1, type: 'hpv', who: 'Isha Gupta', name: '', date: this.rtAddMonths(t, 1), time: '09:00', venue: 'AIIMS Delhi - Nursing Home', addr: 'Ansari Nagar East, New Delhi, 110029', ref: true, refType: 'hpv', notify: ['1d', '6h'], note: 'Carry Isha’s school ID and dose 1 card' },
+      { id: 2, type: 'scr', who: 'Pragati Gupta', name: '', date: this.ccAddDays(t, 5), time: '10:30', venue: 'Dr. Lal PathLabs, Green Park', addr: 'Green Park Main, New Delhi, 110016', ref: true, refType: 'scr', notify: ['1d'] },
+      { id: 4, type: 'hpv', who: 'Isha Gupta', name: '', date: (+t.slice(0, 4) + 1) + '-06-03', time: '10:00', venue: 'AIIMS Delhi - Nursing Home', addr: 'Ansari Nagar East, New Delhi, 110029', ref: true, refType: 'hpv', notify: ['1d'], note: 'Dose 2, about 6 months after dose 1' },
+      { id: 3, type: 'hpv', who: 'Pragati Gupta', name: '', date: this.ccAddDays(t, -4), time: '11:00', venue: 'Max Healthcare Vaccination Clinic', addr: 'Press Enclave Road, Saket, New Delhi, 110017', ref: true, refType: 'hpv', notify: ['1d'] }
+    ];
+  }
+  ccAutoName(r) { var m = this.ccMember(r.who); return (m ? this.ccFirst(m) + '’s ' : 'Your ') + this.ccMeta(r.type).word; }
+  ccTime(t) { if (!t) return ''; var p = t.split(':'), h = +p[0]; return ((h % 12) || 12) + ':' + p[1] + (h < 12 ? ' am' : ' pm'); }
+  ccParseTime(x) {
+    var m = /^\s*(\d{1,2})(?:[:.]?(\d{2}))?\s*(am|pm|a|p)?\.?\s*$/i.exec(x || ''); if (!m) return '';
+    var h = +m[1], mi = m[2] ? +m[2] : 0, ap = (m[3] || '').toLowerCase();
+    if (mi > 59) return '';
+    if (ap) { if (h < 1 || h > 12) return ''; h = (h % 12) + (ap[0] === 'p' ? 12 : 0); } else if (h > 23) return '';
+    return (h < 10 ? '0' : '') + h + ':' + (mi < 10 ? '0' : '') + mi;
+  }
+  ccNow() { var n = new Date(), z = (k) => (k < 10 ? '0' : '') + k; return this.hfToday() + 'T' + z(n.getHours()) + ':' + z(n.getMinutes()); }
+  ccAt(r) { return r.date + 'T' + (r.time || '23:59'); }
+  ccUpcoming() { var n = this.ccNow(); return (this.state.rems || []).filter((r) => this.ccAt(r) >= n).sort((a, b) => (this.ccAt(a) < this.ccAt(b) ? -1 : 1)); }
+  ccPastList() { var n = this.ccNow(); return (this.state.rems || []).filter((r) => this.ccAt(r) < n).sort((a, b) => (this.ccAt(a) > this.ccAt(b) ? -1 : 1)); }
+  ccRemFor(m, type) { var r = this.ccUpcoming().filter((x) => x.type === type && x.who === m.name)[0]; return r ? r.date : ''; }
+  ccRel(iso) {
+    var p = iso.split('-'), a = new Date(+p[0], +p[1] - 1, +p[2]), t = this.hfToday().split('-'), b = new Date(+t[0], +t[1] - 1, +t[2]);
+    var d = Math.round((a - b) / 86400000);
+    if (d === 0) return 'today'; if (d === 1) return 'tomorrow'; if (d === -1) return 'yesterday';
+    if (d > 0) return 'in ' + d + ' days'; return -d + ' days ago';
+  }
+  ccDayShort(iso) { var p = iso.split('-'), d = new Date(+p[0], +p[1] - 1, +p[2]); return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ', ' + (+p[2]) + ' ' + this.rtMon(+p[1] - 1) + (p[0] !== this.hfToday().slice(0, 4) ? ' ' + p[0] : ''); }
+  ccDay(iso) { var p = iso.split('-'), d = new Date(+p[0], +p[1] - 1, +p[2]); return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ', ' + (+p[2]) + ' ' + this.rtMon(+p[1] - 1) + ' ' + p[0]; }
+  ccLate(f, k) {
+    if (!f.date || !f.time) return false;
+    var off = { '2d': 2880, '1d': 1440, '6h': 360, '1h': 60, '30m': 30 }[k] || 0;
+    var p = f.date.split('-'), q = f.time.split(':'), at = new Date(+p[0], +p[1] - 1, +p[2], +q[0], +q[1]);
+    return at.getTime() - off * 60000 < Date.now();
+  }
+  ccPrune(name, type, dates) {
+    var last = (dates || []).slice().sort().pop(); if (!last) return;
+    var rems = (this.state.rems || []).filter((r) => !(r.who === name && r.type === type && r.date <= last));
+    if (rems.length !== (this.state.rems || []).length) this.setState({ rems: rems });
+  }
+  ccDraftState(dr, back) {
+    var s = this.state;
+    var ex = dr.id ? (s.rems || []).filter((r) => r.id === dr.id)[0] : null;
+    var f = ex ? Object.assign({}, ex) : { id: 0, type: dr.type || 'hpv', who: dr.who || (s.members.length === 1 ? s.members[0].name : ''), name: '', date: '', time: '', venue: dr.venue || '', addr: dr.addr || '', ref: !!dr.venue, refType: dr.venue ? (dr.refType || dr.type || 'hpv') : '', notify: ['1d'] };
+    if (dr.reschedule) { f.date = ''; f.time = ''; }
+    f.txt = this.hfDmy(f.date); f.ttxt = this.ccTime(f.time); f.tried = false; f.bad = false; f.tbad = false; f.origVenue = dr.venue || '';
+    return { view: 'rems', remView: 'form', remF: f, remPop: null, remSug: false, remBackTo: dr.from ? 'finder' : (back || 'list'), remFinder: dr.from || '', remResched: !!dr.reschedule, remDel: false, menu: null, modal: null, rtMenu: null };
+  }
+  ccOpenForm(dr, back) { this.setState(this.ccDraftState(dr, back)); }
+  onShow() {
+    var dr = ccTake('remDraft');
+    if (dr) this.ccOpenForm(dr, 'list');
+    else this.setState({ view: 'tracker', modal: null, menu: null });
+  }
+  componentDidMount() { var dr = ccTake('remDraft'); if (dr) this.ccOpenForm(dr, 'list'); }
+  ccUndoToast(msg, fn) { clearTimeout(this.toastTimer); this.ccUndoFn = fn; this.setState({ toast: msg, toastUndo: true }); this.toastTimer = setTimeout(() => { this.ccUndoFn = null; this.setState({ toast: '', toastUndo: false }); }, 5000); }
+  ccSetF(p) { this.setState({ remF: Object.assign({}, this.state.remF, p) }); }
+  ccLog(r) {
+    var s = this.state, idx = s.members.map((m) => m.name).indexOf(r.who); if (idx < 0) idx = s.sel;
+    if (r.type === 'gyn') { this.setState({ rems: s.rems.filter((x) => x.id !== r.id) }); this.showToast('Marked as done. Great job keeping up!'); return; }
+    var m = s.members[idx], n = this.rtDates(m, r.type).length;
+    this.setState({ sel: idx, recType: r.type, menu: null, tip: false, rtMenu: null, rtDel: false, rtSheet: 'edit', rtIdx: n, rtTxt: this.hfDmy(r.date), rtDate: r.date, rtFile: null, rtRes: '', rtBad: false, rtTouched: false });
+  }
+  ccVals(s, cur) {
+    var t = this.hfToday(), meta = (k) => this.ccMeta(k);
+    var rv = s.remView || 'list', f = s.remF || {}, d = (s.rems || []).filter((r) => r.id === s.remSel)[0];
+    var when = (r) => this.rtFmt(r.date) + (r.time ? ', ' + this.ccTime(r.time) : '');
+    var nameOf = (r) => r.name || this.ccAutoName(r);
+    var NOT = [['2d', '2 days before'], ['1d', '1 day before'], ['6h', '6 hrs before'], ['1h', '1 hr before'], ['30m', '30 mins before']];
+    var notLbl = (k) => (NOT.filter((x) => x[0] === k)[0] || ['', ''])[1];
+    var allRows = this.ccUpcoming(), allPast = this.ccPastList();
+    var whoSet = []; allRows.concat(allPast).forEach((r) => { if (whoSet.indexOf(r.who) < 0) whoSet.push(r.who); });
+    var fw = s.remFilter && whoSet.indexOf(s.remFilter) >= 0 ? s.remFilter : '';
+    var rows = allRows.filter((r) => !fw || r.who === fw), past = allPast.filter((r) => !fw || r.who === fw);
+    var wk = this.ccAddDays(t, 7), yr = +t.slice(0, 4), soon = rows.filter((r) => r.date <= wk), later = rows.filter((r) => r.date > wk && +r.date.slice(0, 4) === yr), nextY = rows.filter((r) => r.date > wk && +r.date.slice(0, 4) === yr + 1), beyond = rows.filter((r) => r.date > wk && +r.date.slice(0, 4) > yr + 1);
+    var mkRow = (r) => { var m = this.ccMember(r.who) || {}; return {
+        showRel: r.date <= wk, tileBg: '#FFFFFF', tileBd: '#D0D5DD', tileInk: '#667085', noteOnly: !!r.note && !r.venue, hasFoot: !!r.venue || !!r.note, relCap: (function (x) { return x.charAt(0).toUpperCase() + x.slice(1); })(this.ccRel(r.date)), mon: this.rtMon(+r.date.split('-')[1] - 1), day: +r.date.split('-')[2], time: this.ccDayShort(r.date).split(',')[0] + ', ' + this.ccTime(r.time),
+        when: this.ccDayShort(r.date) + ' · ' + this.ccTime(r.time), note: r.note || '', hasNote: !!r.note, rel: this.ccRel(r.date), venue: r.venue, hasVenue: !!r.venue, img: m.img, first: this.ccFirst(m.name ? m : null), typeLabel: meta(r.type).short || meta(r.type).label,
+        isHpv: r.type === 'hpv', isScr: r.type === 'scr', isGyn: r.type === 'gyn',
+        aria: meta(r.type).label + ' for ' + (m.name || '') + ', ' + when(r) + ', ' + this.ccRel(r.date) + (r.venue ? ', at ' + r.venue : ''),
+        open: () => this.setState({ remView: 'detail', remSel: r.id }) }; };
+    var fm = this.ccMember(f.who);
+    var fin = s.remBackTo === 'finder' && rv === 'form' ? s.remFinder : '';
+    var errWho = '', errDate = '', errTime = '', errNot = '';
+    var okNot = (f.notify || []).filter((k) => !this.ccLate(f, k));
+    if (f.tried) {
+      if (!fm) errWho = 'Choose who this appointment is for.';
+      if (f.bad) errDate = 'Enter a valid date.';
+      else if (!f.date) errDate = 'Choose the date.';
+      else if (f.date < t) errDate = 'Choose today or later.';
+      if (f.tbad) errTime = 'Enter a time like 9:30 am.';
+      else if (!f.time) errTime = 'Select a time.';
+      else if (f.date && this.ccAt(f) < this.ccNow()) errTime = 'Choose a later time.';
+      if (!(f.notify || []).length) errNot = 'Pick at least one time to be notified.';
+      else if (!okNot.length && !errDate && !errTime) errNot = 'These are too late for this appointment. Pick a closer option.';
+    }
+    var valid = () => {
+      var g = f;
+      if (!this.ccMember(g.who) || g.bad || !g.date || g.date < t || g.tbad || !g.time || this.ccAt(g) < this.ccNow()) return false;
+      return (g.notify || []).filter((k) => !this.ccLate(g, k)).length > 0;
+    };
+    var vq = (f.venue || '').trim().toLowerCase();
+    var pool = CC_VENUES[f.type || 'hpv'] || [];
+    var near = !vq && s.remSug && !f.ref;
+    var sugs = f.ref ? [] : near ? pool.slice(0, 3) : vq ? pool.filter((v) => (v.name + ' ' + v.addr).toLowerCase().indexOf(vq) >= 0).slice(0, 4) : [];
+    var back = () => {
+      if (rv === 'form') {
+        if (s.remBackTo === 'record') this.setState({ view: 'record', remPop: null });
+        else if (s.remBackTo === 'detail') this.setState({ remView: 'detail', remPop: null });
+        else this.setState({ remView: 'list', remPop: null });
+      } else if (rv === 'detail') this.setState({ remView: 'list' });
+      else this.setState({ view: 'tracker' });
+    };
+    var tf = (k) => !!d && d.type === k;
+    var ft = f.type || 'hpv';
+    var popAny = !!s.remPop || (!!sugs.length && !!s.remSug);
+    return {
+      isRems: s.view === 'rems', remIsList: rv === 'list', remIsDetail: rv === 'detail' && !!d, remIsForm: rv === 'form',
+      remHeader: rv === 'form' ? (s.remResched ? 'Reschedule' : f.id ? 'Edit reminder' : 'Set appointment reminder') : rv === 'detail' && d ? meta(d.type).label + ' reminder' : 'Appointment reminders',
+      remBack: back, remHdrBtn: !fin, remHdrFinHpv: fin === 'hpv', remHdrFinScr: fin === 'scr', remHdrFinGyn: fin === 'gyn',
+      remNotFin: !fin, remFinHpv: fin === 'hpv', remFinScr: fin === 'scr', remFinGyn: fin === 'gyn',
+      remFinBack: () => { ccMail('openVenue', f.origVenue); this.setState({ view: 'tracker', remPop: null }); },
+      openRems: () => this.setState({ view: 'rems', remView: 'list', menu: null, modal: null, tip: false }),
+      remNew: () => this.ccOpenForm({}, 'list'),
+      remEmpty: !allRows.length && !allPast.length, remAny: allRows.length + allPast.length > 0,
+      remShowFilter: whoSet.length > 1, remFiltEmpty: !!fw && !rows.length && !past.length, remFiltEmptyTxt: 'No reminders for ' + (fw ? this.ccFirst(this.ccMember(fw)) : '') + ' yet.',
+      remFilters: [''].concat(s.members.map((m) => m.name).filter((n) => whoSet.indexOf(n) >= 0)).map((n) => { var on = n === fw, m = n ? this.ccMember(n) : null; return { label: n ? this.ccFirst(m) : 'All', hasImg: !!m, img: m ? m.img : '', padL: m ? '5px' : '14px', onAria: on ? 'true' : 'false', bg: on ? '#FAF3F7' : '#FFFFFF', bd: on ? '#B94569' : '#D0D5DD', ink: on ? '#9F3552' : '#344054', pick: () => this.setState({ remFilter: n }) }; }),
+      remHasRows: rows.length > 0, remNoRows: rows.length === 0,
+      remPastCount: past.length, remDMon: d ? this.rtMon(+d.date.split('-')[1] - 1) : '', remDDayNum: d ? +d.date.split('-')[2] : '',
+      toastHasUndo: !!s.toastUndo && !!s.toast, toastUndoGo: () => { var f = this.ccUndoFn; this.ccUndoFn = null; clearTimeout(this.toastTimer); this.setState({ toast: '', toastUndo: false }); if (f) f(); },
+      remCount: rows.length, remScrollB: '34px',
+      remRows: rows.map(mkRow), remSoon: soon.map(mkRow), remLater: later.map(mkRow), remNextY: nextY.map(mkRow), remBeyond: beyond.map(mkRow), remHasNextY: nextY.length > 0, remHasBeyond: beyond.length > 0, remNextYLbl: String(yr + 1), remBeyondLbl: (yr + 2) + ' and later', remHasSoon: soon.length > 0, remHasLater: later.length > 0,
+      remHasPast: past.length > 0,
+      remPast: past.map((r) => { var m = this.ccMember(r.who); var who = m ? (m.owner ? 'you' : this.ccFirst(m)) : 'you'; return {
+        mon: this.rtMon(+r.date.split('-')[1] - 1), day: +r.date.split('-')[2],
+        q: 'Did ' + who + ' ' + meta(r.type).q + '?', when: this.ccTime(r.time) + (r.venue ? ' · ' + r.venue : ''), yesLabel: meta(r.type).yes,
+        isHpv: r.type === 'hpv', isScr: r.type === 'scr', isGyn: r.type === 'gyn',
+        yes: () => this.ccLog(r),
+        later: () => this.ccOpenForm({ id: r.id, reschedule: true }, 'list'),
+        dismissAria: 'Dismiss ' + nameOf(r),
+        dismiss: () => { this.setState({ rems: s.rems.filter((x) => x.id !== r.id) }); this.ccUndoToast('Reminder dismissed', () => this.setState({ rems: (this.state.rems || []).concat([r]) })); } }; }),
+      remDIsHpv: tf('hpv'), remDIsScr: tf('scr'), remDIsGyn: tf('gyn'),
+      remDDay: d ? this.ccDay(d.date) : '', remDTime: d ? this.ccTime(d.time) : '', remDRel: d ? this.ccRel(d.date) : '',
+      remDImg: d && this.ccMember(d.who) ? this.ccMember(d.who).img : '', remDWho: d && this.ccMember(d.who) ? this.ccMember(d.who).name : '', remDType: d ? meta(d.type).label : '',
+      remDNotify: d ? 'We’ll notify you ' + (function (a) { a = a.map((x) => x.replace(' before', '')); return a.length > 1 ? a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1] : a[0]; })(d.notify.map(notLbl)) + ' before the appointment.' : '',
+      remDNotTags: d ? NOT.filter((x) => d.notify.indexOf(x[0]) >= 0).map((x) => ({ label: x[1] })) : [],
+      remDHasNote: !!d && !!d.note, remDNote: d ? d.note || '' : '', remDHasVenue: !!d && !!d.venue, remDVenue: d ? d.venue : '', remDAddr: d ? d.addr : '', remDHasAddr: !!d && !!d.addr,
+      remDGoHpv: !!d && d.ref && (d.refType || d.type) === 'hpv', remDGoScr: !!d && d.ref && (d.refType || d.type) === 'scr', remDGoGyn: !!d && d.ref && (d.refType || d.type) === 'gyn',
+      remDNoGo: !!d && !!d.venue && !d.ref, remDGoAria: d ? d.venue + ', open ' + ((d.refType || d.type) === 'gyn' ? 'doctor' : 'venue') + ' details' : '',
+      remDGoLabel: d ? ((d.refType || d.type) === 'gyn' ? 'View doctor details' : 'View venue details') : '',
+      remVenueGo: () => { if (d) ccMail('openVenue', d.venue); },
+      remEdit: () => { if (d) this.ccOpenForm({ id: d.id }, 'detail'); },
+      remAskDel: () => this.setState({ remDel: true }),
+      remDelOpen: !!s.remDel && !!d, remDelClose: () => this.setState({ remDel: false }),
+      remDelBody: d ? 'You won’t be notified about ' + nameOf(d) + ' on ' + when(d) + '.' : '',
+      remDelConfirm: () => { this.setState({ rems: s.rems.filter((r) => r.id !== s.remSel), remDel: false, remView: 'list' }); this.showToast('Reminder deleted'); },
+      // form
+      remFIntro: s.remResched ? 'Pick a new date and time, and we’ll remind you again.' : f.id ? 'Update the details and we’ll adjust your notifications.' : 'Add the details of your appointment and choose when we should remind you.',
+      remPopOpen: popAny, remPopClose: () => this.setState({ remPop: null, remSug: false }),
+      remFHasWho: !!fm, remFWho: fm ? fm.name : 'Select a member', remFWhoInk: fm ? '#101828' : '#667085', remFImg: fm ? fm.img : '',
+      remWhoBorder: errWho ? '#FDA29B' : '#D0D5DD',
+      remWhoOpen: s.remPop === 'who', remWhoExp: s.remPop === 'who' ? 'true' : 'false', remWhoZ: s.remPop === 'who' ? 4 : 'auto',
+      remToggleWho: () => this.setState({ remPop: s.remPop === 'who' ? null : 'who', remSug: false }),
+      remWhoOpts: s.members.map((m) => { var on = !!fm && m.name === fm.name; return { name: m.name, img: m.img, sel: on, selAria: on ? 'true' : 'false', bg: on ? '#F9FAFB' : 'transparent',
+        pick: () => { this.setState({ remPop: null, remF: Object.assign({}, f, { who: m.name }) }); } }; }),
+      remFTIsHpv: ft === 'hpv', remFTIsScr: ft === 'scr', remFTIsGyn: ft === 'gyn', remFTypeLabel: meta(ft).label,
+      remTypeOpen: s.remPop === 'type', remTypeExp: s.remPop === 'type' ? 'true' : 'false', remTypeZ: s.remPop === 'type' ? 4 : 'auto',
+      remToggleType: () => this.setState({ remPop: s.remPop === 'type' ? null : 'type', remSug: false }),
+      remTypeOpts: ['hpv', 'scr'].map((k) => ({ label: meta(k).label, isHpv: k === 'hpv', isScr: k === 'scr', isGyn: k === 'gyn', sel: k === ft, selAria: k === ft ? 'true' : 'false', bg: k === ft ? '#F9FAFB' : 'transparent',
+        pick: () => this.setState({ remPop: null, remF: Object.assign({}, f, { type: k }) }) })),
+      remFNote: f.note || '', remSetNote: (e) => this.ccSetF({ note: e.target.value }), remFName: f.name || '', remFNamePh: 'e.g. ' + this.ccAutoName({ who: f.who, type: ft }), remSetName: (e) => this.ccSetF({ name: e.target.value }),
+      remToday: t, remFTxt: f.txt || '', remFDate: f.date || '', remDateBorder: errDate ? '#FDA29B' : '#D0D5DD',
+      remTypeDate: (e) => {
+        var dg = (e.target.value || '').replace(/\D/g, '').slice(0, 8);
+        var tx = dg.slice(0, 2) + (dg.length > 2 ? '/' + dg.slice(2, 4) : '') + (dg.length > 4 ? '/' + dg.slice(4) : '');
+        var iso = '', bad = false;
+        if (dg.length === 8) { var dd = +dg.slice(0, 2), mm = +dg.slice(2, 4), yy = +dg.slice(4), dt = new Date(yy, mm - 1, dd); if (yy >= 1900 && dt.getFullYear() === yy && dt.getMonth() === mm - 1 && dt.getDate() === dd) iso = dg.slice(4) + '-' + dg.slice(2, 4) + '-' + dg.slice(0, 2); else bad = true; }
+        else if (dg.length) bad = true;
+        this.ccSetF({ txt: tx, date: iso, bad: bad });
+      },
+      remPickDate: (e) => { var v = e.target.value; this.ccSetF({ date: v, txt: this.hfDmy(v), bad: false }); },
+      remFTTxt: f.ttxt || '', remFTime: f.time || '', remTimeBorder: errTime ? '#FDA29B' : '#D0D5DD',
+      remTypeTime: (e) => { var v = e.target.value || '', tm = this.ccParseTime(v); this.ccSetF({ ttxt: v, time: tm, tbad: !!v.trim() && !tm }); },
+      remFTimeLbl: f.time ? this.ccTime(f.time) : 'Select time', remFTimeInk: f.time ? '#101828' : '#667085',
+      remTimeOpen: s.remPop === 'time', remTimeExp: s.remPop === 'time' ? 'true' : 'false', remTimeZ: s.remPop === 'time' ? 4 : 'auto',
+      remToggleTime: () => this.setState({ remPop: s.remPop === 'time' ? null : 'time', remSug: false }),
+      remTimeOpts: (() => { var out = [], z = (k) => (k < 10 ? '0' : '') + k, now = this.ccNow(); for (var m = 7 * 60; m <= 21 * 60; m += 30) { var v = z(Math.floor(m / 60)) + ':' + z(m % 60), on = f.time === v, past = !!f.date && (f.date + 'T' + v) < now;
+        out.push({ label: this.ccTime(v), sel: on, selAria: on ? 'true' : 'false', disAria: past ? 'true' : 'false', bg: on ? '#F9FAFB' : 'transparent', ink: past ? '#98A2B3' : '#101828', cursor: past ? 'not-allowed' : 'pointer',
+          pick: ((val, p) => () => { if (p) return; this.setState({ remPop: null, remF: Object.assign({}, f, { time: val, ttxt: this.ccTime(val), tbad: false }) }); })(v, past) }); } return out; })(),
+      remPickTime: (e) => { var v = e.target.value; this.ccSetF({ time: v, ttxt: this.ccTime(v), tbad: false }); },
+      remErrWho: errWho, remErrDate: errDate, remErrTime: errTime, remErrNot: errNot,
+      remFVenue: f.venue || '', remFVenuePh: meta(ft).ph, remVenZ: sugs.length && s.remSug ? 4 : 'auto',
+      remSetVenue: (e) => { this.setState({ remSug: true, remPop: null, remF: Object.assign({}, f, { venue: e.target.value, ref: false, addr: '', refType: '' }) }); },
+      remVenueFocus: () => { if (!s.remSug && !f.ref) this.setState({ remSug: true, remPop: null }); },
+      remSugOpen: !!s.remSug && sugs.length > 0, remSugNear: near,
+      remSugs: sugs.map((v) => ({ name: v.name, sub: v.addr, pick: () => this.setState({ remSug: false, remF: Object.assign({}, f, { venue: v.name, addr: v.addr, ref: true, refType: ft }) }) })),
+      remVenHas: !!(f.venue || '').length, remVenEmpty: !(f.venue || '').length, remFHasAddr: !!f.ref && !!f.addr, remFAddr: f.addr || '',
+      remFOtherList: !!f.ref && !!f.refType && f.refType !== ft, remFOtherTxt: f.refType ? 'from the ' + meta(f.refType).list + ' list' : '',
+      remClearVenue: () => this.setState({ remSug: false, remF: Object.assign({}, f, { venue: '', addr: '', ref: false, refType: '' }) }),
+      remNotOpen: s.remPop === 'not', remNotExp: s.remPop === 'not' ? 'true' : 'false', remNotZ: s.remPop === 'not' ? 4 : 'auto', remNotBorder: errNot ? '#FDA29B' : (s.remPop === 'not' ? '#D983A8' : '#D0D5DD'),
+      remToggleNot: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState({ remPop: s.remPop === 'not' ? null : 'not', remSug: false }); },
+      remOpenNot: () => this.setState({ remPop: 'not', remSug: false }),
+      remNotNone: !(f.notify || []).length,
+      remNotChips: NOT.filter((x) => (f.notify || []).indexOf(x[0]) >= 0).map((x) => { var late = this.ccLate(f, x[0]); return { label: x[1], aria: 'Remove ' + x[1],
+        border: late ? '#EAECF0' : '#D0D5DD', ink: late ? '#98A2B3' : '#344054', deco: late ? 'line-through' : 'none',
+        remove: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState({ remPop: s.remPop === 'not' ? 'not' : null, remF: Object.assign({}, f, { notify: f.notify.filter((k) => k !== x[0]) }) }); } }; }),
+      remNotOpts: NOT.map((x) => { var on = (f.notify || []).indexOf(x[0]) >= 0, late = this.ccLate(f, x[0]); return { label: x[1], sel: on && !late, selAria: on && !late ? 'true' : 'false', late: late, disAria: late ? 'true' : 'false',
+        bg: on && !late ? '#F9FAFB' : 'transparent', ink: late ? '#98A2B3' : '#101828', cursor: late ? 'not-allowed' : 'pointer',
+        toggle: () => { if (late) return; var nn = on ? f.notify.filter((k) => k !== x[0]) : NOT.map((y) => y[0]).filter((k) => k === x[0] || f.notify.indexOf(k) >= 0); this.ccSetF({ notify: nn }); } }; }),
+      remSaveLabel: s.remResched ? 'Save new time' : f.id ? 'Save changes' : 'Set reminder',
+      remSave: (e) => {
+        if (!valid()) {
+          if (e && e.preventDefault) e.preventDefault();
+          var a = e && e.target && e.target.closest ? e.target.closest('a') : null; if (a) a.__block = true;
+          this.setState({ remF: Object.assign({}, f, { tried: true }), remPop: null, remSug: false });
+          return;
+        }
+        var rec = { id: f.id || Date.now(), type: ft, who: f.who, name: (f.name || '').trim(), note: (f.note || '').trim(), date: f.date, time: f.time, venue: (f.venue || '').trim(), addr: f.ref ? f.addr : '', ref: !!f.ref, refType: f.ref ? (f.refType || ft) : '', notify: okNot };
+        var rems = (s.rems || []).filter((r) => r.id !== rec.id).concat([rec]);
+        var msg = s.remResched ? 'Rescheduled to ' + when(rec) : f.id ? 'Reminder updated' : 'Reminder set for ' + when(rec);
+        if (fin) { ccMail('openVenue', f.origVenue); ccMail('remToast', msg); this.setState({ rems: rems, remPop: null, remSug: false, view: 'tracker' }); return; }
+        var next = s.remBackTo === 'record' ? { view: 'record' } : (f.id && !s.remResched) ? { remView: 'detail', remSel: rec.id } : { remView: 'list' };
+        this.setState(Object.assign({ rems: rems, remPop: null, remSug: false }, next));
+        this.showToast(msg);
+      }
+    };
+  }
   renderVals() {
     var s = this.state;
     var cur = s.members[s.sel] || s.members[0];
@@ -535,6 +783,7 @@ class Component extends DCLogic {
     var delMember = s.members[s.delIdx] || {};
     return {
       ...this.hfVals(s, cur),
+      ...this.ccVals(s, cur),
       isTracker: s.view === 'tracker',
       isAdding: s.view === 'form' || s.view === 'details' || s.view === 'edit',
       isRecord: s.view === 'record',
