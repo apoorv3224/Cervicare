@@ -85,14 +85,16 @@ class Component extends DCLogic {
   rtDates(m, type) { return (type === 'scr' ? m.scrD : m.hpvD) || []; }
   rtFiles(m, type) {
     var F = (type === 'scr' ? m.scrF : m.hpvF) || [], D = this.rtDates(m, type);
-    return D.map((d, i) => F[i] || { file: 'Prescription_' + (type === 'scr' ? 'Screening' : 'Dose') + '_' + (i + 1) + '.pdf', size: '1.2 MB' });
+    return D.map((d, i) => F[i] || { file: (type === 'scr' ? 'Report_Screening_' : 'Prescription_Dose_') + (i + 1) + '.pdf', size: '1.2 MB' });
   }
+  rtUpd(m, type) { var U = (type === 'scr' ? m.scrU : m.hpvU) || [], D = this.rtDates(m, type), t = this.hfToday(); return D.map((d, i) => U[i] || { d: t, k: 'Added' }); }
   rtSort(patch) {
     ['hpv', 'scr'].forEach((t) => {
       var D = patch[t + 'D']; if (!D) return;
       var Fs = patch[t + 'F'] || [];
-      var pairs = D.map((d, i) => [d, Fs[i] || null]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-      patch[t + 'D'] = pairs.map((x) => x[0]); if (patch[t + 'F']) patch[t + 'F'] = pairs.map((x) => x[1]);
+      var Us = patch[t + 'U'] || [], Rs = patch[t + 'R'] || [];
+      var pairs = D.map((d, i) => [d, Fs[i] || null, Us[i] || null, Rs[i] || '']).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      patch[t + 'D'] = pairs.map((x) => x[0]); if (patch[t + 'F']) patch[t + 'F'] = pairs.map((x) => x[1]); if (patch[t + 'U']) patch[t + 'U'] = pairs.map((x) => x[2]); if (patch[t + 'R']) patch[t + 'R'] = pairs.map((x) => x[3]);
     });
     return patch;
   }
@@ -109,7 +111,7 @@ class Component extends DCLogic {
     if (kind === 'Taken') return ['#ECFDF3', '#ABEFC6', '#067647'];
     if (kind === 'Upcoming') return ['#FFFAEB', '#FEDF89', '#B54708'];
     if (kind === 'Overdue') return ['#D92D20', '#D92D20', '#FFFFFF'];
-    return ['#F2F4F7', '#EAECF0', '#344054'];
+    return ['#FFFAEB', '#FEDF89', '#B54708'];
   }
   rtRows(s, cur) {
     var type = s.recType === 'scr' ? 'scr' : 'hpv';
@@ -125,20 +127,22 @@ class Component extends DCLogic {
       if (n === dates.length + 1) {
         r.kind = 'next';
         var last = dates[dates.length - 1];
-        if (rem) { r.status = 'Upcoming'; r.pre = 'Reminder set'; r.date = this.rtFmt(rem); r.bell = true; }
+        if (rem) { r.status = 'Upcoming'; r.pre = 'Reminder set'; r.date = this.rtFmt(rem); r.bell = true; r.due = rem; }
         else if (last) {
           var rec = this.rtAddMonths(last, type === 'scr' ? 60 : 6);
+          r.due = rec;
           if (rec < today) { r.status = 'Overdue'; r.pre = 'Was due'; r.date = this.rtFmtMY(rec); r.late = true; }
-          else { r.status = type === 'scr' ? 'Upcoming' : 'Pending'; r.pre = 'Recommended'; r.date = this.rtFmtMY(rec); }
+          else { r.status = type === 'scr' ? 'Upcoming' : 'Pending'; r.pre = 'Due by'; r.date = this.rtFmtMY(rec); }
         }
       }
       rows.push(r);
     }
     return rows.map((r, k) => {
-      var b = this.rtBadge(r.status), key = type + '-' + r.i, on = s.rtMenu === key;
+      var soon = !!r.due && r.due >= today && r.due <= this.rtAddMonths(today, 1);
+      var b = (r.status === 'Pending' || r.status === 'Upcoming') && r.due && !soon ? ['#F2F4F7', '#EAECF0', '#344054'] : this.rtBadge(r.status), key = type + '-' + r.i, on = s.rtMenu === key;
       return {
         i: r.i, label: r.label, status: r.status, date: r.date, pre: r.pre || '', hasPre: !!r.pre,
-        preInk: r.late ? '#B42318' : (r.bell ? '#B54708' : '#475467'), dateInk: r.date === '-' ? '#98A2B3' : '#475467',
+        preInk: r.late ? '#B42318' : (r.bell ? (soon ? '#B54708' : '#475467') : '#475467'), dateInk: r.date === '-' ? '#98A2B3' : '#475467',
         bBg: b[0], bBorder: b[1], bInk: b[2], line: k ? '1px solid #EAECF0' : 'none',
         hasMenu: r.kind !== 'pending', isTaken: r.kind === 'taken', isNext: r.kind === 'next', addLabel: 'Add ' + r.label,
         rowAria: r.label + ', ' + r.status + (r.date !== '-' ? ', ' + (r.pre ? r.pre.toLowerCase() + ' ' : '') + r.date : '') + (r.kind === 'taken' && files[r.i] ? ', prescription attached' : '') + (r.kind === 'taken' ? '. Tap to edit.' : (r.kind === 'next' ? '. Tap to add the date.' : '')),
@@ -147,7 +151,7 @@ class Component extends DCLogic {
         viewRx: () => { var f = files[r.i]; this.setState({ rtMenu: null, rtView: { file: f.file, size: f.size, label: r.label, date: r.date } }); },
         chevInk: r.kind === 'pending' ? 'transparent' : '#98A2B3',
         open: () => { if (r.kind === 'pending') return; this.setState({ rtDetail: r.i }); },
-        openEdit: () => { this.setState({ rtMenu: null, rtSheet: 'edit', rtIdx: r.i, rtTxt: this.hfDmy(dates[r.i]), rtDate: dates[r.i] || '', rtFile: files[r.i] || null, rtBad: false, rtTouched: false }); },
+        openEdit: () => { this.setState({ rtRes: type === 'scr' ? ((cur.scrR || [])[r.i] || '') : '', rtMenu: null, rtSheet: 'edit', rtIdx: r.i, rtTxt: this.hfDmy(dates[r.i]), rtDate: dates[r.i] || '', rtFile: files[r.i] || null, rtBad: false, rtTouched: false }); },
         menuOn: on, menuExp: on ? 'true' : 'false', kebabBg: on ? '#F2F4F7' : 'transparent',
         menuAria: 'More options for ' + r.label,
         delDis: r.kind === 'next' ? 'true' : 'false', delInk: r.kind === 'next' ? '#D0D5DD' : '#344054', delIcon: r.kind === 'next' ? '#D0D5DD' : '#475467', delCursor: r.kind === 'next' ? 'not-allowed' : 'pointer',
@@ -155,7 +159,7 @@ class Component extends DCLogic {
         toggle: () => this.setState({ rtMenu: on ? null : key }),
         edit: () => this.setState({ rtMenu: null, rtSheet: 'edit', rtIdx: r.i, rtTxt: this.hfDmy(dates[r.i]), rtDate: dates[r.i] || '', rtFile: files[r.i] || null, rtBad: false, rtTouched: false }),
         del: () => { if (r.kind === 'next') return; this.setState({ rtMenu: null, rtDel: true, rtIdx: r.i }); },
-        add: () => { this.setState({ rtMenu: null }); if (type === 'hpv') this.hfStart(cur); else this.setState({ recMode: 'add' }); },
+        add: () => { this.setState({ rtMenu: null }); this.hfStart(cur, true, type); },
         remind: () => {
           var pre = rem || '';
           this.setState({ rtMenu: null, rtSheet: 'rem', rtIdx: r.i, rtTxt: this.hfDmy(pre), rtDate: pre, rtBad: false, rtTouched: false });
@@ -182,19 +186,21 @@ class Component extends DCLogic {
     var pink = { bg: '#FAF3F7', border: '#F1D4E2' };
     var age = -1;
     if (cur.dob) { var b = new Date(cur.dob), t = new Date(); age = t.getFullYear() - b.getFullYear(); if (t.getMonth() < b.getMonth() || (t.getMonth() === b.getMonth() && t.getDate() < b.getDate())) age--; }
-    if (type === 'hpv' && dates.length >= 3) return { text: (self ? 'All 3 doses done! Your HPV vaccine course is complete. Well done!' : 'All 3 doses done! ' + who + '’s HPV vaccine course is complete. Great job!'), acts: false, bg: '#ECFDF3', border: '#ABEFC6' };
+    if (type === 'hpv' && dates.length >= 3) return { text: (self ? 'All 3 doses done! Your HPV vaccine course is complete. Well done!' : 'All 3 doses done! ' + who + '’s HPV vaccine course is complete. Great job!'), acts: false, bg: '#FAF3F7', border: '#F1D4E2' };
     if (type === 'hpv' && dates.length === 2) return Object.assign({ text: 'Both doses done, great job! Add a third here if ' + (self ? 'your' : 'her') + ' doctor advises it.', acts: false }, pink);
     if (type === 'scr' && !self && age >= 0 && age < 21) return Object.assign({ text: this.rtTip(type, cur), acts: false }, pink);
     var next = this.rtRows(s, cur).filter((r) => r.isNext)[0];
     if (!next) return Object.assign({ text: this.rtTip(type, cur), acts: false }, pink);
     var what = next.label, rem = type === 'scr' ? cur.scrRem : cur.hpvRem;
-    var book = ' Book with a centre or gynecologist, then add it here.';
+    var item = type === 'scr' ? 'screening' : 'dose', who2 = self ? 'your' : who + '’s';
+    var book = ' Just book a visit with a centre or gynecologist, and add it here once it’s done.';
     var own = self ? '' : who + '’s ';
     var lead;
-    if (next.status === 'Overdue') lead = (self ? '' : own) + what + ' is overdue, but it’s not too late!';
-    else if (rem) lead = 'Your reminder is set.';
-    else if (next.pre === 'Recommended') lead = (self ? 'Your next ' + (type === 'scr' ? 'screening' : 'dose') : own + 'next ' + (type === 'scr' ? 'screening' : 'dose')) + ' is coming up.';
-    else lead = (self ? '' : own) + what + ' is pending.';
+    if (next.status === 'Overdue') lead = (type === 'scr' ? who2 + ' screening' : (self ? '' : own) + what) + ' is a little overdue, but it’s not too late.';
+    else if (rem) { lead = 'Your reminder is set, so I’ll nudge you when it’s time.'; book = ' Book a visit before then, and add it here once it’s done.'; }
+    else if (next.pre === 'Due by' && type === 'scr') { lead = 'A quick screening every 5 years helps us catch any changes early.'; book = ' When it’s time, book a visit with a centre or gynecologist, and add it here.'; }
+    else if (next.pre === 'Due by') lead = (self ? 'Your' : who + '’s') + ' next dose is due about 6 months after the last one.';
+    else lead = (self ? '' : own) + what + ' is still to be done.';
     lead = lead.charAt(0).toUpperCase() + lead.slice(1);
     var late = next.status === 'Overdue';
     return { text: lead + book, acts: true, bg: late ? '#FEF3F2' : '#FAF3F7', border: late ? '#FECDCA' : '#F1D4E2' };
@@ -207,12 +213,13 @@ class Component extends DCLogic {
       rtDOpen: true, rtDClose: () => this.setState({ rtDetail: null }),
       rtDTitle: type === 'scr' ? 'Screening Details' : 'Dose Details', rtDLabel: d.label, rtDStatus: d.status,
       rtDBBg: d.bBg, rtDBBorder: d.bBorder, rtDBInk: d.bInk,
-      rtDDateLabel: d.isTaken ? (type === 'scr' ? 'Date of screening' : 'Date of vaccination') : (d.pre || 'Date'), rtDDate: d.date,
+      rtDDateLabel: d.isTaken ? (type === 'scr' ? 'Date of screening' : 'Date of vaccination') : ({ 'Due by': 'Recommended by', 'Was due': 'Was due by', 'Reminder set': 'Reminder on' }[d.pre] || 'Recommended by'), rtDDate: d.date,
       rtDFor: cur.owner ? 'You' : (cur.first || cur.name.split(' ')[0]), rtFull: () => this.showToast('Full-screen view is coming soon'),
-      rtDTaken: d.isTaken, rtDNext: d.isNext, rtDHasRx: d.isTaken && !!f, rtDNoRx: d.isTaken && !f,
+      rtDShowRes: type === 'scr' && d.isTaken, rtDResult: this.rtResName((cur.scrR || [])[d.i]) || 'Not added', rtDResInk: (cur.scrR || [])[d.i] === 'f' ? '#B42318' : ((cur.scrR || [])[d.i] ? '#475467' : '#98A2B3'), rtDIsHpv: type !== 'scr', rtDIsScr: type === 'scr', rtDEditAria: 'Edit ' + d.label, rtDDelAria: 'Delete ' + d.label, rtDTaken: d.isTaken, rtDNext: d.isNext, rtDHasRx: d.isTaken && !!f, rtDNoRx: d.isTaken && !f,
       rtDRxName: f ? f.file : '', rtDRxSize: f ? f.size : '',
       rtDEdit: d.openEdit, rtDDel: d.del, rtDRemind: d.remind, rtDUnremind: d.unremind, rtDHasRem: d.hasRem, rtDRemLabel: d.remLabel,
-      rtDHelp: 'Book an appointment with a centre or gynecologist. Once it’s done, add the record here.'
+      rtDHelp: (d.pre === 'Due by' || d.pre === 'Was due' ? (type === 'scr' ? 'We recommend screening every 5 years. ' : 'We recommend this dose 6 months after the previous one. ') : '') + 'Book with a centre or gynecologist, then add it here.',
+      rtDAdded: (function (u, f) { return u ? ('Updated in app on ' + f(u.d)) : ''; })(this.rtUpd(cur, type)[d.i], (x) => this.rtFmt(x)), rtDHasAdded: d.isTaken,
     };
   }
   rtVals(s, cur) {
@@ -237,7 +244,12 @@ class Component extends DCLogic {
     var delDate = dates[s.rtIdx];
     return {
       rtRows: this.rtRows(s, cur),
-      rtCol1: type === 'scr' ? 'Screening' : 'Dose',
+      rtShowRes: s.rtSheet === 'edit' && type === 'scr', rtDocLbl: type === 'scr' ? 'Report' : 'Prescription', rtUpTxt: type === 'scr' ? 'Upload report' : 'Upload prescription',
+      rtDocTitle: type === 'scr' ? 'Report' : 'Prescription', rtDlAria: type === 'scr' ? 'Download report' : 'Download prescription',
+      rtR0On: this.rtChip(s.rtRes === 'n')[3], rtR0B: this.rtChip(s.rtRes === 'n')[0], rtR0Bg: this.rtChip(s.rtRes === 'n')[1], rtR0C: this.rtChip(s.rtRes === 'n')[2], rtR0: () => this.setState({ rtRes: s.rtRes === 'n' ? '' : 'n' }),
+      rtR1On: this.rtChip(s.rtRes === 'f')[3], rtR1B: this.rtChip(s.rtRes === 'f')[0], rtR1Bg: this.rtChip(s.rtRes === 'f')[1], rtR1C: this.rtChip(s.rtRes === 'f')[2], rtR1: () => this.setState({ rtRes: s.rtRes === 'f' ? '' : 'f' }),
+      rtR2On: this.rtChip(s.rtRes === 'a')[3], rtR2B: this.rtChip(s.rtRes === 'a')[0], rtR2Bg: this.rtChip(s.rtRes === 'a')[1], rtR2C: this.rtChip(s.rtRes === 'a')[2], rtR2: () => this.setState({ rtRes: s.rtRes === 'a' ? '' : 'a' }),
+      rtCol1: type === 'scr' ? 'Screening' : 'Dose', rtColDate: type === 'scr' ? 'Screening date' : 'Vaccination date',
       rtWhoStatic: true,
       ...this.rtDVals(s, cur, type), rtWhoOpen: !!s.rtWho, rtWhoExp: s.rtWho ? 'true' : 'false',
       rtWhoAria: 'Showing records ' + (cur.owner ? 'for you' : 'for ' + (cur.first || cur.name.split(' ')[0])) + '. Change person',
@@ -256,10 +268,10 @@ class Component extends DCLogic {
       rtRemLabel: (type === 'scr' ? cur.scrRem : cur.hpvRem) ? 'Change reminder' : 'Set reminder',
       rtLateRemind: () => { var d = dates.length, rm = (type === 'scr' ? cur.scrRem : cur.hpvRem) || ''; this.setState({ rtMenu: null, rtSheet: 'rem', rtIdx: d, rtTxt: this.hfDmy(rm), rtDate: rm, rtBad: false, rtTouched: false }); },
       rtSheetOpen: !!s.rtSheet,
-      rtShowRx: !!s.rtSheet && !isRem, rtHasFile: !!s.rtFile, rtNoFile: !s.rtFile,
+      rtShowRx: !!s.rtSheet && !isRem, rtHasFile: !!s.rtFile && (s.rtFile.pct == null || s.rtFile.pct >= 100), rtUploading: !!s.rtFile && s.rtFile.pct != null && s.rtFile.pct < 100, rtPct: s.rtFile ? Math.round(s.rtFile.pct == null ? 100 : s.rtFile.pct) + '%' : '0%', rtNoFile: !s.rtFile,
       rtFileName: s.rtFile ? s.rtFile.file : '', rtFileSize: s.rtFile ? s.rtFile.size : '',
       rtUpload: () => { if (this.state.hfConsentGiven) { this.setState({ hfFor: 'rt' }); this.hfOpenPicker(); } else this.setState({ hfFor: 'rt', hfConsentOpen: true, hfChk: false }); },
-      rtRemoveFile: () => this.setState({ rtFile: null }),
+      rtRemoveFile: () => { clearInterval(this.rtUpT); this.setState({ rtFile: null }); },
       rtViewFile: () => this.setState({ rtView: { file: s.rtFile.file, size: s.rtFile.size, label: name + n, date: s.rtDate ? this.rtFmt(s.rtDate) : '' } }),
       rtViewOpen: !!s.rtView, rtViewClose: () => this.setState({ rtView: null }),
       rtViewTitle: s.rtView ? 'Prescription · ' + s.rtView.label : '', rtViewSub: s.rtView ? [s.rtView.date, s.rtView.size].filter(Boolean).join(' · ') : '',
@@ -286,13 +298,16 @@ class Component extends DCLogic {
       rtClose: close,
       rtSave: () => {
         if (!s.rtDate || err) { this.setState({ rtTouched: true }); return; }
+        if (s.rtFile && s.rtFile.pct != null && s.rtFile.pct < 100) { this.showToast('Please wait for the upload to finish'); return; }
         if (isRem) {
           this.rtSetMember(type === 'scr' ? { scrRem: s.rtDate } : { hpvRem: s.rtDate }, { rtSheet: null });
           this.showToast('Reminder set for ' + this.rtFmt(s.rtDate));
         } else {
           var nd = dates.slice(), isNew = s.rtIdx >= dates.length; nd[s.rtIdx] = s.rtDate;
           var nf = this.rtFiles(cur, type).slice(); while (nf.length < nd.length) nf.push(null); nf[s.rtIdx] = s.rtFile || null;
-          var patch = type === 'scr' ? { scrD: nd, scr: nd.length, scrF: nf } : { hpvD: nd, hpv: nd.length, hpvF: nf };
+          var nu = this.rtUpd(cur, type).slice(); nu[s.rtIdx] = { d: this.hfToday(), k: isNew ? 'Added' : 'Updated' };
+          var nr = (cur.scrR || []).slice(); while (nr.length < nd.length) nr.push(''); nr[s.rtIdx] = s.rtRes || '';
+          var patch = type === 'scr' ? { scrD: nd, scr: nd.length, scrF: nf, scrU: nu, scrR: nr } : { hpvD: nd, hpv: nd.length, hpvF: nf, hpvU: nu };
           if (isNew) patch[type === 'scr' ? 'scrRem' : 'hpvRem'] = '';
           this.rtSetMember(patch, { rtSheet: null });
           this.showToast(name + n + (isNew ? ' added' : ' updated'));
@@ -304,7 +319,8 @@ class Component extends DCLogic {
       rtDelConfirm: () => {
         var nd = dates.filter((_, i) => i !== s.rtIdx);
         var nf = this.rtFiles(cur, type).filter((_, i) => i !== s.rtIdx);
-        this.rtSetMember(type === 'scr' ? { scrD: nd, scr: nd.length, scrF: nf } : { hpvD: nd, hpv: nd.length, hpvF: nf }, { rtDel: false, rtDetail: null });
+        var nu = this.rtUpd(cur, type).filter((_, i) => i !== s.rtIdx);
+        this.rtSetMember(type === 'scr' ? { scrD: nd, scr: nd.length, scrF: nf, scrU: nu, scrR: (cur.scrR || []).filter((_, i) => i !== s.rtIdx) } : { hpvD: nd, hpv: nd.length, hpvF: nf, hpvU: nu }, { rtDel: false, rtDetail: null });
         this.showToast(name + n + ' record deleted');
       },
       recRows: [],
@@ -312,18 +328,21 @@ class Component extends DCLogic {
         var samples = ['2015-02-17', '2020-01-17', '2025-01-18'];
         if (type === 'scr') {
           var nd = dates.concat([samples[dates.length] || today]);
-          this.rtSetMember({ scrD: nd, scr: nd.length, scrRem: '' }, { view: 'tracker' });
+          this.rtSetMember({ scrD: nd, scr: nd.length, scrRem: '', scrU: this.rtUpd(cur, 'scr').concat([{ d: today, k: 'Added' }]) }, dates.length ? { recMode: 'list' } : { view: 'tracker' });
           this.showToast('Screening record added');
         }
       }
     };
   }
   // ---------- HPV vaccination form ----------
-  hfStart(cur) {
-    var base = cur.hpv || 0;
-    this.setState({ view: 'record', recType: 'hpv', recMode: 'add', menu: null, tip: false,
-      hf: { ans: base > 0 ? 'yes' : null, base: base, doses: [{ date: '', file: '', size: '', pct: 0 }] },
-      hfTouched: false, hfWhy: false, hfConsentOpen: false, hfConfirm: false, hfChk: false, hfFor: -1 });
+  rtChip(on) { return on ? ['#B94569', '#FAF3F7', '#9F3552', 'true'] : ['#D0D5DD', '#FFFFFF', '#344054', 'false']; }
+  rtResName(r) { return { n: 'Normal', f: 'Needs follow-up', a: 'Awaiting result' }[r] || ''; }
+  hfStart(cur, fromList, type) {
+    type = type === 'scr' ? 'scr' : 'hpv';
+    var base = this.rtDates(cur, type).length;
+    this.setState({ view: 'record', recType: type, recMode: 'add', menu: null, tip: false,
+      hf: { type: type, ans: base > 0 ? 'yes' : null, base: base, doses: [{ date: '', file: '', size: '', pct: 0, res: '' }] },
+      hfFromList: !!fromList, hfTouched: false, hfWhy: false, hfConsentOpen: false, hfConfirm: false, hfChk: false, hfFor: -1 });
   }
   hfFmt(iso) {
     if (!iso) return '';
@@ -351,7 +370,8 @@ class Component extends DCLogic {
   }
   hfVals(s, cur) {
     var hf = s.hf || { ans: null, base: 0, doses: [{ date: '', file: '', size: '' }] };
-    var on = s.view === 'record' && s.recType === 'hpv' && s.recMode === 'add';
+    var T = (hf.type === 'scr') ? 'scr' : 'hpv', isScr = T === 'scr';
+    var on = s.view === 'record' && s.recMode === 'add' && s.recType === T;
     var last = hf.doses.length - 1, today = this.hfToday();
     var teal = '#0E9384';
     var doses = hf.doses.map((d, i) => {
@@ -361,7 +381,7 @@ class Component extends DCLogic {
       var txt = d.txt != null ? d.txt : this.hfDmy(d.date);
       if (d.bad) err = 'Enter a real date, like 23/04/2024.';
       else if (!d.date && txt && s.hfTouched && i === last) err = 'Enter the full date as DD/MM/YYYY.';
-      else if (!d.date && s.hfTouched && i === last) err = 'Please enter the date of Dose ' + n + '.';
+      else if (!d.date && s.hfTouched && i === last) err = 'Please enter the date of ' + (isScr ? 'Screening ' : 'Dose ') + n + '.';
       else if (d.date && d.date > today) err = 'The date can’t be in the future.';
       var hasDate = !!d.date && !err;
       return {
@@ -372,7 +392,11 @@ class Component extends DCLogic {
         pct: Math.round(d.pct || 0) + '%', sep: i > 0, dateBorder: err ? '#FDA29B' : '#D0D5DD',
         canRemove: i > 0 && i === last, removeAria: 'Remove dose ' + n,
         remove: () => { clearInterval(this['hfUp' + i]); this.setState({ hf: Object.assign({}, hf, { doses: hf.doses.slice(0, -1) }), hfTouched: false }); },
-        txt: txt, ariaField: 'Date of vaccination, dose ' + n + ', format DD/MM/YYYY', ariaPick: 'Choose date of dose ' + n + ' from calendar',
+        lbl: isScr ? 'Date of Screening : Screening ' + n : 'Date of Vaccination : Dose ' + n, isScr: isScr,
+        r0On: this.rtChip(d.res === 'n')[3], r0B: this.rtChip(d.res === 'n')[0], r0Bg: this.rtChip(d.res === 'n')[1], r0C: this.rtChip(d.res === 'n')[2], r0: () => this.hfSetDose(i, { res: d.res === 'n' ? '' : 'n' }),
+        r1On: this.rtChip(d.res === 'f')[3], r1B: this.rtChip(d.res === 'f')[0], r1Bg: this.rtChip(d.res === 'f')[1], r1C: this.rtChip(d.res === 'f')[2], r1: () => this.hfSetDose(i, { res: d.res === 'f' ? '' : 'f' }),
+        r2On: this.rtChip(d.res === 'a')[3], r2B: this.rtChip(d.res === 'a')[0], r2Bg: this.rtChip(d.res === 'a')[1], r2C: this.rtChip(d.res === 'a')[2], r2: () => this.hfSetDose(i, { res: d.res === 'a' ? '' : 'a' }),
+        txt: txt, ariaField: (isScr ? 'Date of screening ' : 'Date of vaccination, dose ') + n + ', format DD/MM/YYYY', ariaPick: 'Choose date of ' + (isScr ? 'screening ' : 'dose ') + n + ' from calendar',
         setDate: (e) => { var v = e.target.value; this.hfSetDose(i, { date: v, txt: this.hfDmy(v), bad: false }); },
         typeDate: (e) => {
           var dg = (e.target.value || '').replace(/\D/g, '').slice(0, 8);
@@ -405,7 +429,21 @@ class Component extends DCLogic {
       hfYes: () => this.setState({ hf: Object.assign({}, hf, { ans: 'yes' }) }),
       hfNo: () => this.setState({ hf: Object.assign({}, hf, { ans: 'no' }), hfWhy: false }),
       hfDoses: doses,
-      hfReady: ready, hfCanAdd: (hf.base + hf.doses.length) < 3,
+      hfReady: ready, hfCanAdd: isScr ? hf.doses.length < 5 : (hf.base + hf.doses.length) < 3,
+      hfImg: isScr ? 'assets/scr-hero2.jpg' : 'assets/hpv-syringe2.jpg',
+      hfQ: isScr ? 'Have you ever had a cervical screening?' : 'Have you ever taken an HPV vaccine?',
+      hfNoT: isScr ? 'A quick check can catch changes early' : 'Protection can start with one dose',
+      hfNoB: isScr ? 'Screening finds changes in the cervix before they turn into cancer. Talk to a doctor about getting screened.' : 'The HPV vaccine helps protect against the viruses that cause most cervical cancers. Talk to a doctor about getting vaccinated.',
+      hfIsHpv: !isScr, hfIsScr: isScr,
+      hfFindTxt: isScr ? 'Find Nearby Screening Centre' : 'Find Nearby Vaccination Centre',
+      hfNote: isScr ? 'If you do not recall the date of your last screening, please contact your health service provider.' : 'If you do not recall the date of your last vaccination, please contact your health service provider.',
+      hfUpTxt: isScr ? 'Click to upload report' : 'Click to upload prescription', hfRmAria: isScr ? 'Remove report' : 'Remove prescription',
+      hfWhyTxt: isScr ? 'Why upload a report?' : 'Why upload a prescription?',
+      hfWhy1: isScr ? 'To keep accurate records of your screenings' : 'To keep accurate records of your completed doses',
+      hfWhy2: isScr ? 'To remind you when your next screening is due' : 'To remind you when your next dose is due',
+      hfWhy3: isScr ? 'To let clinicians review your past results' : 'To let clinicians verify each dose with barcode and date',
+      hfAddTxt: isScr ? 'Add another screening' : 'Add another dose',
+      hfConsentTxt: isScr ? 'Please confirm that you consent to share your report so we can validate your cervical screening record.' : 'Please confirm that you consent to share your prescription so we can validate your HPV vaccination record.',
       hfWhyOpen: !!s.hfWhy, hfWhyOpenIt: () => this.setState({ hfWhy: true }), hfWhyClose: () => this.setState({ hfWhy: false }),
       hfWhyBackdrop: (e) => { if (e.target.hasAttribute('data-backdrop')) this.setState({ hfWhy: false }); },
       hfShowWho: !cur.owner, hfWho: 'For ' + (cur.first || cur.name.split(' ')[0]),
@@ -415,19 +453,23 @@ class Component extends DCLogic {
       hfFindCentre: () => this.showToast('Centre finder is coming soon'),
       hfFindGyn: () => this.showToast('Gynecologist finder is coming soon'),
       hfSaveNo: () => {
-        var members = s.members.map((m, i) => i === s.sel ? Object.assign({}, m, { hpvNone: true }) : m);
+        var members = s.members.map((m, i) => i === s.sel ? Object.assign({}, m, isScr ? { scrNone: true } : { hpvNone: true }) : m);
         this.setState({ members: members, view: 'tracker' });
-        this.showToast('Saved. You can add a dose any time');
+        this.showToast(isScr ? 'Saved. You can add a screening any time' : 'Saved. You can add a dose any time');
       },
       hfSubmit: () => { if (!ready) { this.setState({ hfTouched: true }); return; } this.setState({ hfConfirm: true }); },
       hfConfirm: () => {
-        var prior = cur.hpvD || [];
+        var prior = this.rtDates(cur, T);
         var all = prior.concat(hf.doses.map((d) => d.date));
-        var pf = (cur.hpvF || []).slice(); while (pf.length < prior.length) pf.push(null);
+        var pf = ((isScr ? cur.scrF : cur.hpvF) || []).slice(); while (pf.length < prior.length) pf.push(null);
         var allF = pf.concat(hf.doses.map((d) => (d.file && (d.pct || 0) >= 100) ? { file: d.file, size: d.size } : null));
-        var members = s.members.map((m, i) => i === s.sel ? Object.assign({}, m, this.rtSort({ hpv: all.length, hpvD: all, hpvF: allF, hpvRem: '', hpvNone: false })) : m);
-        this.setState({ members: members, view: 'tracker', hfConfirm: false });
-        this.showToast(hf.doses.length > 1 ? hf.doses.length + ' doses added' : 'Dose ' + (hf.base + 1) + ' added');
+        var allU = this.rtUpd(cur, T).concat(hf.doses.map(() => ({ d: this.hfToday(), k: 'Added' })));
+        var patch = {}; patch[T] = all.length; patch[T + 'D'] = all; patch[T + 'F'] = allF; patch[T + 'U'] = allU; patch[T + 'Rem'] = ''; patch[T + 'None'] = false;
+        if (isScr) { var pr = (cur.scrR || []).slice(); while (pr.length < prior.length) pr.push(''); patch.scrR = pr.concat(hf.doses.map((d) => d.res || '')); }
+        var members = s.members.map((m, i) => i === s.sel ? Object.assign({}, m, this.rtSort(patch)) : m);
+        this.setState(Object.assign({ members: members, hfConfirm: false }, s.hfFromList ? { view: 'record', recType: T, recMode: 'list' } : { view: 'tracker' }));
+        var nm = isScr ? 'Screening ' : 'Dose ', pl = isScr ? ' screenings added' : ' doses added';
+        this.showToast(hf.doses.length > 1 ? hf.doses.length + pl : nm + (hf.base + 1) + ' added');
       },
       hfConsentOpen: !!s.hfConsentOpen, hfChk: !!s.hfChk,
       hfConsentLocked: !s.hfChk, hfConsentBtn: s.hfChk ? '#B94569' : '#F1D4E2', hfConsentCursor: s.hfChk ? 'pointer' : 'not-allowed',
@@ -444,7 +486,16 @@ class Component extends DCLogic {
         if (!f || i < 0) return;
         if (f.size > 5 * 1024 * 1024) { this.showToast('That file is over 5 MB. Please choose a smaller one'); return; }
         var kb = f.size / 1024;
-        if (i === 'rt') { this.setState({ rtFile: { file: f.name, size: kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(kb)) + ' KB' } }); this.showToast('Prescription attached'); return; }
+        if (i === 'rt') {
+          this.setState({ rtFile: { file: f.name, size: kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(kb)) + ' KB', pct: 0 } });
+          clearInterval(this.rtUpT);
+          this.rtUpT = setInterval(() => {
+            var rf = this.state.rtFile; if (!rf || rf.pct == null) { clearInterval(this.rtUpT); return; }
+            var np = Math.min(100, rf.pct + 20); this.setState({ rtFile: Object.assign({}, rf, { pct: np }) });
+            if (np >= 100) clearInterval(this.rtUpT);
+          }, 220);
+          return;
+        }
         this.hfSetDose(i, { file: f.name, size: kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(kb)) + ' KB', pct: 0 });
         // Simulated upload progress for the prototype
         clearInterval(this['hfUp' + i]);
@@ -492,17 +543,17 @@ class Component extends DCLogic {
       scrVerb: cur.scr > 0 ? 'View ' : 'Fill ', scrCount: cur.scr > 0 ? this.countLabel(cur.scr) : 'No records added yet', scrAria: (cur.scr > 0 ? 'View ' : 'Fill ') + 'Cervical Screening Record, ' + (cur.scr > 0 ? this.countLabel(cur.scr) : 'no records added yet'),
       scrBg: cur.scr > 0 ? '#FFFFFF' : '#B94569', scrBorder: cur.scr > 0 ? '#D0D5DD' : '#B94569', scrInk: cur.scr > 0 ? '#344054' : '#FFFFFF', scrChip: cur.scr > 0 ? '#FAF3F7' : 'rgba(255,255,255,0.18)', scrIcon: cur.scr > 0 ? '#9F3552' : '#FFFFFF', scrLine: cur.scr > 0 ? '#EAECF0' : 'rgba(255,255,255,0.35)', scrMeta: cur.scr > 0 ? '#475467' : '#FFFFFF',
       openHpv: () => { if (cur.hpv > 0) this.setState({ view: 'record', recType: 'hpv', recMode: 'list', menu: null, tip: false }); else this.hfStart(cur); },
-      openScr: () => this.setState({ view: 'record', recType: 'scr', recMode: cur.scr > 0 ? 'list' : 'add', menu: null, tip: false }),
+      openScr: () => { if (cur.scr > 0) this.setState({ view: 'record', recType: 'scr', recMode: 'list', menu: null, tip: false }); else this.hfStart(cur, false, 'scr'); },
       recIsList: s.recMode === 'list',
       recNote: (s.recType === 'hpv' && cur.hpvDoses) ? 'Viewing and editing a record is coming soon.' : 'Sample records. Viewing and editing a record is coming soon.',
-      recHeader: (s.recType === 'hpv') ? (s.recMode === 'list' ? 'Vaccination Record' : 'Fill Vaccination Record') : (s.recMode === 'list' ? 'Screening Record' : 'Add Screening Record'),
+      recHeader: (s.recType === 'hpv') ? (s.recMode === 'list' ? 'Vaccination Record' : 'Fill Vaccination Record') : (s.recMode === 'list' ? 'Screening Record' : 'Fill Screening Record'),
       recShowHead: true,
       recTitle: s.recType === 'scr' ? (s.recMode === 'list' ? 'Screening history' : 'Add cervical screening record') : (s.recMode === 'list' ? 'HPV vaccine doses' : 'Add HPV vaccination record'),
       recWho: cur.owner ? 'For you' : 'For ' + (cur.first || cur.name.split(' ')[0]),
       recRows: (s.recType === 'hpv' && cur.hpvDoses) ? cur.hpvDoses : this.recRowsFor(s.recType, (s.recType === 'scr' ? cur.scr : cur.hpv) || 0),
       recField1: s.recType === 'scr' ? 'Date of the test' : 'Date the dose was given',
       recField2: s.recType === 'scr' ? 'Test type (Pap smear, HPV test, VIA and so on)' : 'Dose number (1, 2 or 3)',
-      recToAdd: () => { if (s.recType === 'hpv') this.hfStart(cur); else this.setState({ recMode: 'add' }); },
+      recToAdd: () => this.hfStart(cur, true, s.recType),
       recBack: () => this.setState(s.recMode === 'add' && ((s.recType === 'scr' ? cur.scr : cur.hpv) > 0) ? { recMode: 'list' } : { view: 'tracker' }),
       recSave: () => {
         var key = s.recType === 'scr' ? 'scr' : 'hpv';
