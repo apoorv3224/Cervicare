@@ -1,4 +1,4 @@
-const CACHE='cervicare-v136';
+const CACHE='cervicare-v137';
 const FILES=["./", "index.html", "manifest.webmanifest", "tracker-logic.js", "icons/icon-192.png", "icons/icon-512.png", "assets/astro.png", "assets/avatar.png", "assets/clipboard.png", "assets/crowd.jpg", "assets/doctor.jpg", "assets/isha.png", "assets/onboard-1.png", "assets/onboard-2.jpg", "assets/onboard-3.png", "assets/pragati.jpg", "assets/ribbon.png", "assets/target.png", "assets/who.png"];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
